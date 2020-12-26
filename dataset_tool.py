@@ -97,6 +97,33 @@ class TFRecordExporter:
             tfr_writer.write(ex.SerializeToString())
         self.cur_images += 1
 
+    def add_nparray(self, img):
+        if img.dtype != np.float32:
+            print("add_nparray expects float32 type arrays only")
+            return
+
+        if self.print_progress and self.cur_images % self.progress_interval == 0:
+            print('%d / %d\r' % (self.cur_images, self.expected_images), end='', flush=True)
+        if self.shape is None:
+            self.shape = img.shape
+            self.resolution_log2 = int(np.log2(self.shape[1]))
+            assert self.shape[0] in [1, 3]
+            assert self.shape[1] == self.shape[2]
+            assert self.shape[1] == 2**self.resolution_log2
+            tfr_opt = tf.io.TFRecordOptions(tf.compat.v1.io.TFRecordCompressionType.NONE)
+            for lod in range(self.resolution_log2 - 1):
+                tfr_file = self.tfr_prefix + '-r%02d.tfrecords' % (self.resolution_log2 - lod)
+                self.tfr_writers.append(tf.io.TFRecordWriter(tfr_file, tfr_opt))
+        assert img.shape == self.shape
+        for lod, tfr_writer in enumerate(self.tfr_writers):
+            if lod:
+                img = (img[:, 0::2, 0::2] + img[:, 0::2, 1::2] + img[:, 1::2, 0::2] + img[:, 1::2, 1::2]) * 0.25
+            ex = tf.train.Example(features=tf.train.Features(feature={
+                'shape': tf.train.Feature(int64_list=tf.train.Int64List(value=img.shape)),
+                'data': tf.train.Feature(bytes_list=tf.train.BytesList(value=[img.tostring()]))}))
+            tfr_writer.write(ex.SerializeToString())
+        self.cur_images += 1
+
     def add_labels(self, labels):
         if self.print_progress:
             print('%-40s\r' % 'Saving labels...', end='', flush=True)
@@ -652,7 +679,7 @@ def create_celeba(tfrecord_dir, celeba_dir, cx=89, cy=121):
 
 def create_from_images(tfrecord_dir, image_dir, shuffle):
     print('Loading images from "%s"' % image_dir)
-    image_filenames = sorted(glob.glob(os.path.join(image_dir, '*')))
+    image_filenames = [x for x in sorted(glob.glob(os.path.join(image_dir, '*'))) if x[-4:].lower() in [".png", ".jpg"]]
     if len(image_filenames) == 0:
         error('No input images found')
 
@@ -663,18 +690,127 @@ def create_from_images(tfrecord_dir, image_dir, shuffle):
         error('Input images must have the same width and height')
     if resolution != 2 ** int(np.floor(np.log2(resolution))):
         error('Input image resolution must be a power-of-two')
-    if channels not in [1, 3]:
-        error('Input images must be stored as RGB or grayscale')
+    if channels not in [1, 3, 4]:
+        error('Input images must be stored as RGB, RGBA, or grayscale')
 
     with TFRecordExporter(tfrecord_dir, len(image_filenames)) as tfr:
         order = tfr.choose_shuffled_order() if shuffle else np.arange(len(image_filenames))
         for idx in range(order.size):
-            img = np.asarray(PIL.Image.open(image_filenames[order[idx]]))
+            img = np.asarray(PIL.Image.open(image_filenames[order[idx]]))[:,:,:3]
             if channels == 1:
                 img = img[np.newaxis, :, :] # HW => CHW
             else:
                 img = img.transpose([2, 0, 1]) # HWC => CHW
             tfr.add_image(img)
+
+#----------------------------------------------------------------------------
+
+# def gatherRasterFiles(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
+#     rastFiles = [x for x in os.listdir(rasterDir) if x[0].isdigit() and x.endswith(".npy")]
+#     rastFiles.sort()
+#     validRastFiles = []
+#     invalidRastFiles = []
+#     initBin = None
+#     mean = None
+#     maxd = .0
+#     # first pass to check validity
+#     for i, d in enumerate(rastFiles):
+#         print(d, i, len(rastFiles))
+#         rast = np.load(rasterDir+"/"+d)
+#         rastBin = (abs(rast).sum(axis=2) > 0)
+#         if i==0:
+#             initBin = rastBin
+#             mean = rast.copy()
+#             maxd = abs(rast).max()
+#         elif True in (initBin ^ rastBin):
+#             print(d,"rasterization does not align with mean")
+#             invalidRastFiles.append(d)
+#         else:
+#             validRastFiles.append(d)
+#             mean += rast
+#             maxd = max(maxd, abs(rast).max())
+#     mean /= len(validRastFiles)
+#     if len(invalidRastFiles):
+#         print("invalid rasters found!")
+#         for rna in invalidRastFiles:
+#             print("   ",rna)
+#     return validRastFiles, invalidRastFiles
+
+def gatherRasters(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
+    rastFiles = [x for x in os.listdir(rasterDir) if x[0].isdigit() and x.endswith(".npy")]
+    rastFiles.sort()
+    rasts = []
+    rastNoAlign = []
+    initBin = None
+    for i, d in enumerate(rastFiles):
+        print(d, i, len(rastFiles))
+        rast = np.load(rasterDir+"/"+d)
+        rastBin = (abs(rast).sum(axis=2) > 0)
+        if i==0:
+            initBin = rastBin
+        if True in (initBin ^ rastBin):
+            print(d,"rasterization does not align with mean")
+            rastNoAlign.append(d)
+        else:
+            rasts.append(rast)
+    if len(rastNoAlign):
+        print("not aligned rasters found!")
+        for rna in rastNoAlign:
+            print("   ",rna)
+    return rasts, rastNoAlign
+
+def toMeanAndDeltas(rasts):
+    mean = np.zeros(rasts[0].shape, dtype=np.float32)
+    dmax = .0
+    for i in range(len(rasts)):
+        mean += rasts[i]
+    mean /= len(rasts)
+    for i in range(len(rasts)):
+        rasts[i] -= mean
+        dmax = max(dmax, abs(rasts[i]).max())
+    deltaScale = 0.9 / dmax
+    for i in range(len(rasts)):
+        rasts[i] *= deltaScale
+    return mean, deltaScale, rasts
+    # mean = np.mean(rasts, axis=0)
+    # deltas = rasts - mean
+    # deltaScale = 0.9 / abs(deltas).max()
+    # deltas *= deltaScale
+    # return mean, deltaScale, deltas
+
+def create_from_nparrays(tfrecord_dir, image_dir, shuffle):
+    print('Loading nparray images from "%s"' % image_dir)
+
+    rasts, rastNoAlign = gatherRasters(image_dir)
+    nImgs = len(rasts)
+    print("TOTAL %d images found"%nImgs)
+    
+    print('computing mean and normalized deltas')
+    mean, deltaScale, deltas = toMeanAndDeltas(rasts)
+    
+    savePath = tfrecord_dir+"/mean_and_scale.npy"
+    np.save(savePath, {'mean':mean, 'deltaScale':deltaScale})
+    print("mean and deltaScale saved to " + savePath)
+
+    img = deltas[0]
+    resolution = img.shape[0]
+    channels = img.shape[2] if img.ndim == 3 else 1
+    if img.shape[1] != resolution:
+        error('Input images must have the same width and height')
+    if resolution != 2 ** int(np.floor(np.log2(resolution))):
+        error('Input image resolution must be a power-of-two')
+    if channels not in [1, 3]:
+        error('Input images must be stored as RGB or grayscale')
+
+    with TFRecordExporter(tfrecord_dir, nImgs) as tfr:
+        order = tfr.choose_shuffled_order() if shuffle else np.arange(nImgs)
+        for idx in range(order.size):
+            img = deltas[order[idx]]
+            if channels == 1:
+                img = img[np.newaxis, :, :] # HW => CHW
+            else:
+                img = img.transpose([2, 0, 1]) # HWC => CHW
+            tfr.add_nparray(img)
 
 #----------------------------------------------------------------------------
 
@@ -942,6 +1078,12 @@ def execute_cmdline(argv):
 
     p = add_command(    'create_from_images', 'Create dataset from a directory full of images.',
                                             'create_from_images datasets/mydataset myimagedir')
+    p.add_argument(     'tfrecord_dir',     help='New dataset directory to be created')
+    p.add_argument(     'image_dir',        help='Directory containing the images')
+    p.add_argument(     '--shuffle',        help='Randomize image order (default: 1)', type=int, default=1)
+
+    p = add_command(    'create_from_nparrays', 'Create dataset from a directory full of .npy arrays.',
+                                            'create_from_nparrays datasets/mydataset myimagedir')
     p.add_argument(     'tfrecord_dir',     help='New dataset directory to be created')
     p.add_argument(     'image_dir',        help='Directory containing the images')
     p.add_argument(     '--shuffle',        help='Randomize image order (default: 1)', type=int, default=1)

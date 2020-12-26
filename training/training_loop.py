@@ -178,7 +178,8 @@ def training_loop(
                 real_images_var = tf.Variable(name='images', trainable=False, initial_value=tf.zeros([minibatch_gpu] + training_set.shape))
                 real_labels_var = tf.Variable(name='labels', trainable=False, initial_value=tf.zeros([minibatch_gpu, training_set.label_size]))
                 real_images_write, real_labels_write = training_set.get_minibatch_tf()
-                real_images_write = tflib.convert_images_from_uint8(real_images_write)
+                if real_images_write.dtype == tf.uint8:
+                    real_images_write = tflib.convert_images_from_uint8(real_images_write)
                 data_fetch_ops += [tf.assign(real_images_var, real_images_write)]
                 data_fetch_ops += [tf.assign(real_labels_var, real_labels_write)]
 
