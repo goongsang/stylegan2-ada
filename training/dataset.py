@@ -33,12 +33,13 @@ class TFRecordDataset:
         buffer_mb       = 256,      # Read buffer size (megabytes).
         num_threads     = 2,        # Number of concurrent threads.
         _is_validation  = False,
+        dtype           = None
 ):
         self.tfrecord_dir       = tfrecord_dir
         self.resolution         = None
         self.resolution_log2    = None
         self.shape              = []        # [channels, height, width]
-        self.dtype              = 'uint8'
+        self.dtype              = dtype
         self.label_file         = label_file
         self.label_size         = None      # components
         self.label_dtype        = None
@@ -71,7 +72,10 @@ class TFRecordDataset:
         for tfr_file in tfr_files:
             tfr_opt = tf.python_io.TFRecordOptions(tf.python_io.TFRecordCompressionType.NONE)
             for record in tf.python_io.tf_record_iterator(tfr_file, tfr_opt):
-                tfr_shapes.append(self.parse_tfrecord_np(record).shape)
+                if self.dtype=='uint8':
+                    tfr_shapes.append(self.parse_tfrecord_np_uint8(record).shape)
+                else:
+                    tfr_shapes.append(self.parse_tfrecord_np_float32(record).shape)
                 break
 
         # Autodetect label filename.
@@ -119,7 +123,10 @@ class TFRecordDataset:
                 dset = tf.data.TFRecordDataset(tfr_file, compression_type='', buffer_size=buffer_mb<<20)
                 if max_images is not None:
                     dset = dset.take(max_images)
-                dset = dset.map(self.parse_tfrecord_tf, num_parallel_calls=num_threads)
+                if self.dtype == 'uint8':
+                    dset = dset.map(self.parse_tfrecord_tf_uint8, num_parallel_calls=num_threads)
+                else:
+                    dset = dset.map(self.parse_tfrecord_tf_float32, num_parallel_calls=num_threads)
                 dset = tf.data.Dataset.zip((dset, self._tf_labels_dataset))
                 bytes_per_item = np.prod(tfr_shape) * np.dtype(self.dtype).itemsize
                 if self.shuffle and shuffle_mb > 0:
@@ -203,31 +210,48 @@ class TFRecordDataset:
 
     # Parse individual image from a tfrecords file into TensorFlow expression.
     @staticmethod
-    def parse_tfrecord_tf(record):
+    def parse_tfrecord_tf_uint8(record):
         features = tf.parse_single_example(record, features={
             'shape': tf.FixedLenFeature([3], tf.int64),
             'data': tf.FixedLenFeature([], tf.string)})
         data = tf.decode_raw(features['data'], tf.uint8)
         return tf.reshape(data, features['shape'])
 
+    @staticmethod
+    def parse_tfrecord_tf_float32(record):
+        features = tf.parse_single_example(record, features={
+            'shape': tf.FixedLenFeature([3], tf.int64),
+            'data': tf.FixedLenFeature([], tf.float32)})
+        # data = tf.decode_raw(features['data'], tf.uint8)
+        # return tf.reshape(data, features['shape'])
+        return tf.reshape(features['data'], features['shape'])
+
     # Parse individual image from a tfrecords file into NumPy array.
     @staticmethod
-    def parse_tfrecord_np(record):
+    def parse_tfrecord_np_uint8(record):
         ex = tf.train.Example()
         ex.ParseFromString(record)
         shape = ex.features.feature['shape'].int64_list.value # pylint: disable=no-member
         data = ex.features.feature['data'].bytes_list.value[0] # pylint: disable=no-member
         return np.fromstring(data, np.uint8).reshape(shape)
 
+    @staticmethod
+    def parse_tfrecord_np_float32(record):
+        ex = tf.train.Example()
+        ex.ParseFromString(record)
+        shape = ex.features.feature['shape'].int64_list.value # pylint: disable=no-member
+        data = ex.features.feature['data'].float_list.value # pylint: disable=no-member
+        return np.array(data, dtype=np.float32).reshape(shape)
+
 #----------------------------------------------------------------------------
 # Construct a dataset object using the given options.
 
-def load_dataset(path=None, resolution=None, max_images=None, max_label_size=0, mirror_augment=False, repeat=True, shuffle=True, seed=None):
+def load_dataset(path=None, resolution=None, max_images=None, max_label_size=0, mirror_augment=False, repeat=True, shuffle=True, seed=None, dtype=None):
     _ = seed
     assert os.path.isdir(path)
     return TFRecordDataset(
         tfrecord_dir=path,
         resolution=resolution, max_images=max_images, max_label_size=max_label_size,
-        mirror_augment=mirror_augment, repeat=repeat, shuffle=shuffle)
+        mirror_augment=mirror_augment, repeat=repeat, shuffle=shuffle, dtype=dtype)
 
 #----------------------------------------------------------------------------

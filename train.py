@@ -37,6 +37,7 @@ def setup_training_options(
     data       = None, # Training dataset (required): <path>
     res        = None, # Override dataset resolution: <int>, default = highest available
     mirror     = None, # Augment dataset with x-flips: <bool>, default = False
+    dtype      = None, # Training data dtype
 
     # Metrics (not included in desc).
     metrics    = None, # List of metric names: [], ['fid50k_full'] (default), ...
@@ -101,7 +102,7 @@ def setup_training_options(
     desc = data_name
 
     with tf.Graph().as_default(), tflib.create_session().as_default(): # pylint: disable=not-context-manager
-        args.train_dataset_args = dnnlib.EasyDict(path=data, max_label_size='full')
+        args.train_dataset_args = dnnlib.EasyDict(path=data, max_label_size='full', dtype=dtype)
         dataset_obj = dataset.load_dataset(**args.train_dataset_args) # try to load the data and see what comes out
         args.train_dataset_args.resolution = dataset_obj.shape[-1] # be explicit about resolution
         args.train_dataset_args.max_label_size = dataset_obj.label_size # be explicit about label size
@@ -434,6 +435,7 @@ def run_training(outdir, seed, dry_run, **hyperparam_options):
     print(f'Training data:     {training_options.train_dataset_args.path}')
     print(f'Training length:   {training_options.total_kimg} kimg')
     print(f'Resolution:        {training_options.train_dataset_args.resolution}')
+    print(f'Training data type:{training_options.train_dataset_args.dtype}')
     print(f'Number of GPUs:    {training_options.num_gpus}')
     print()
 
@@ -524,6 +526,7 @@ def main():
     group.add_argument('--data',   help='Training dataset path (required)', metavar='PATH', required=True)
     group.add_argument('--res',    help='Dataset resolution (default: highest available)', type=int, metavar='INT')
     group.add_argument('--mirror', help='Augment dataset with x-flips (default: false)', type=_str_to_bool, metavar='BOOL')
+    group.add_argument('--dtype',  help='Training dtype (required)', choices=['uint8','float32'], required=True)
 
     group = parser.add_argument_group('metrics')
     group.add_argument('--metrics',    help='Comma-separated list or "none" (default: fid50k_full)', type=_parse_comma_sep, metavar='LIST')
