@@ -106,7 +106,6 @@ def training_loop(
     resume_pkl              = None,     # Network pickle to resume training from.
     abort_fn                = None,     # Callback function for determining whether to abort training.
     progress_fn             = None,     # Callback function for updating training progress.
-    dtype                   = None      # Training data type
 ):
     assert minibatch_size % (num_gpus * minibatch_gpu) == 0
     start_time = time.time()
@@ -133,9 +132,9 @@ def training_loop(
     D.print_layers()
 
     print('Exporting sample images...')
-    print('Training dtype', dtype)
+    print('Training dtype', train_dataset_args.dtype)
     grid_size, grid_reals, grid_labels = setup_snapshot_image_grid(training_set)
-    if dtype == 'uint8':
+    if train_dataset_args.dtype == 'uint8':
         save_image_grid(grid_reals, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
     else:
         save_image_grid(grid_reals, os.path.join(run_dir, 'reals.png'), drange=[-1,1], grid_size=grid_size)
