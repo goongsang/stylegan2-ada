@@ -126,7 +126,8 @@ class TFRecordDataset:
                 if self.dtype == 'uint8':
                     dset = dset.map(self.parse_tfrecord_tf_uint8, num_parallel_calls=num_threads)
                 else:
-                    dset = dset.map(self.parse_tfrecord_tf_float32, num_parallel_calls=num_threads)
+                    # dset = dset.map(self.parse_tfrecord_tf_float32, num_parallel_calls=num_threads)
+                    dset = dset.map(lambda x: self.parse_tfrecord_tf_float32(x, self.shape), num_parallel_calls=num_threads)
                 dset = tf.data.Dataset.zip((dset, self._tf_labels_dataset))
                 bytes_per_item = np.prod(tfr_shape) * np.dtype(self.dtype).itemsize
                 if self.shuffle and shuffle_mb > 0:
@@ -218,13 +219,12 @@ class TFRecordDataset:
         return tf.reshape(data, features['shape'])
 
     @staticmethod
-    def parse_tfrecord_tf_float32(record):
-        features = tf.parse_single_example(record, features={
-            'shape': tf.FixedLenFeature([3], tf.int64),
-            'data': tf.FixedLenFeature([], tf.float32)})
-        # data = tf.decode_raw(features['data'], tf.uint8)
-        # return tf.reshape(data, features['shape'])
-        return tf.reshape(features['data'], features['shape'])
+    def parse_tfrecord_tf_float32(record, shape):
+        featuresDict = {'shape': tf.FixedLenFeature([3], tf.int64), 
+                        'data': tf.FixedLenFeature(shape, tf.float32)}
+        features = tf.parse_single_example(record, features=featuresDict)
+        data = features['data']
+        return data
 
     # Parse individual image from a tfrecords file into NumPy array.
     @staticmethod

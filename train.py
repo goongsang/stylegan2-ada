@@ -128,6 +128,7 @@ def setup_training_options(
         if mirror:
             desc += '-mirror'
     args.train_dataset_args.mirror_augment = mirror
+    args.train_dataset_args.dtype = dtype
 
     # ----------------------------
     # Metrics: metrics, metricdata
@@ -411,7 +412,7 @@ def setup_training_options(
 
 #----------------------------------------------------------------------------
 
-def run_training(outdir, seed, dry_run, **hyperparam_options):
+def run_training(outdir, seed, dry_run, dtype, **hyperparam_options):
     # Setup training options.
     tflib.init_tf({'rnd.np_random_seed': seed})
     run_desc, training_options = setup_training_options(**hyperparam_options)
@@ -431,12 +432,12 @@ def run_training(outdir, seed, dry_run, **hyperparam_options):
     print('Training options:')
     print(json.dumps(training_options, indent=2))
     print()
-    print(f'Output directory:  {training_options.run_dir}')
-    print(f'Training data:     {training_options.train_dataset_args.path}')
-    print(f'Training length:   {training_options.total_kimg} kimg')
-    print(f'Resolution:        {training_options.train_dataset_args.resolution}')
-    print(f'Training data type:{training_options.train_dataset_args.dtype}')
-    print(f'Number of GPUs:    {training_options.num_gpus}')
+    print(f'Output directory:   {training_options.run_dir}')
+    print(f'Training data:      {training_options.train_dataset_args.path}')
+    print(f'Training length:    {training_options.total_kimg} kimg')
+    print(f'Training data type: {training_options.train_dataset_args.dtype}')
+    print(f'Resolution:         {training_options.train_dataset_args.resolution}')
+    print(f'Number of GPUs:     {training_options.num_gpus}')
     print()
 
     # Dry run?
