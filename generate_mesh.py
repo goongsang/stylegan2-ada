@@ -181,7 +181,6 @@ def bilinear_sampler(img, x, y):
     x = x * tf.cast(max_x-1, tf.float32)
     y = y * tf.cast(max_y-1, tf.float32)
 
-
     # grab 4 nearest corner points for each (x_i, y_i)
     x0 = tf.cast(tf.floor(x), tf.int32)
     x1 = x0 + 1
@@ -244,15 +243,22 @@ import tensorflow as tf
 tflib.init_tf()
 
 # network_pkl = "/home/jseo/nvidia/stylegan2-ada/geom-train/00002-rasters_tfr-auto1-gamma100/network-snapshot-001200.pkl"
-# network_pkl = "/home/jseo/Downloads/network-snapshot-009421.pkl"
+# network_pkl = "/home/jseo/Downloads/network-snapshot-002048-g25.pkl"
+# network_pkl = "/home/jseo/Downloads/1661853/00000-rasters_tfr-res256-stylegan2-noaug/network-snapshot-001228.pkl"
+# network_pkl = "/home/jseo/Downloads/1660968/00000-rasters_tfr-res256-auto4-gamma25/network-snapshot-007577.pkl"
+# network_pkl = "/home/jseo/Downloads/1661853-2/00000-rasters_tfr-res256-stylegan2-noaug/network-snapshot-006348.pkl"
+# network_pkl = "/home/jseo/Downloads/1660972/00000-rasters_tfr-res256-auto4-gamma2/network-snapshot-014745.pkl"
+# network_pkl = "/home/jseo/Downloads/1660968/00000-rasters_tfr-res256-auto4-gamma25/network-snapshot-014950.pkl"
+network_pkl = "/home/jseo/Downloads/1660969/00000-rasters_tfr-res256-auto4-gamma10/network-snapshot-014131.pkl"
 # network_pkl = "/home/jseo/Downloads/network-snapshot-004096.pkl"
+# network_pkl = "/home/jseo/Downloads/network-snapshot-009421.pkl"
 # network_pkl = "/home/jseo/Downloads/network-snapshot-002048.pkl"
-network_pkl = "/home/jseo/Downloads/network-snapshot-001024.pkl"
+# network_pkl = "/home/jseo/Downloads/network-snapshot-001024.pkl"
 truncation_psi = None
 class_idx = None
 meanObj = libObj.libObj("/media/jseo/BigData/nvidia/stylegan3d/data/triplegangers_v1/mean.obj")
 meanAndScale = np.load("/media/jseo/BigData/nvidia/stylegan3d/data/triplegangers_v1/rasters_tfr/mean_and_scale.npy", allow_pickle=True).item()
-deltaScale = meanAndScale['deltaScale']
+deltaScale = 1.0 / meanAndScale['deltaScale']
 imageMean = tf.convert_to_tensor(meanAndScale['mean'], dtype=tf.float32)
 
 print('Loading networks from "%s"...' % network_pkl)
@@ -284,30 +290,79 @@ label = np.zeros([1] + Gs.input_shapes[1][1:])
 if class_idx is not None:
     label[:, class_idx] = 1
 
-seeds = [0, 10, 20, 30, 40]
+nPnts = meanObj.pnts.shape[0]
+nUVs = meanObj.uvs.shape[0]
+uvIdToVtxId = tf.convert_to_tensor(meanObj.uvIdToVtxId.reshape(nPnts, 1), dtype=tf.int32)
+u = np.repeat(meanObj.uvs[:,0], b).reshape(b, 1, nUVs)
+v = np.repeat(meanObj.uvs[:,1], b).reshape(b, 1, nUVs)
+x = tf.convert_to_tensor(u, dtype=tf.float32)
+y = tf.convert_to_tensor(v, dtype=tf.float32)
+
+# def imageToMesh(image):
+#     posImages = tf.transpose(image, [0, 2, 3, 1]) * deltaScale + imageMean
+#     # b = posImages.shape[0]
+#     # uvPnts = tf.reshape(bilinear_sampler(posImages, x, y), (b, nUVs, 3))
+#     uvPnts = tf.reshape(bilinear_sampler(posImages, x, y), (1, nUVs, 3))
+
+#     # pnts_list = []
+#     # for i in range(b):
+#     #     pnts_list.append(tf.gather_nd(uvPnts[i], uvIdToVtxId))
+#     # pnts = tf.stack(pnts_list)
+#     pnts = tf.gather_nd(uvPnts[0], uvIdToVtxId)
+#     return pnts
+
+# img2pnts = tf.function(imageToMesh)
+
+h, w, c = imageMean.shape
+uvPnts = tf.reshape(bilinear_sampler(tf.reshape(imageMean, (1,h,w,c)), x, y), (1, nUVs, 3))
+pnts = tf.gather_nd(uvPnts[0], uvIdToVtxId)
+meanPnts = tf.get_default_session().run(pnts)
+
+import time
+seeds = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]
 for seed_idx, seed in enumerate(seeds):
     print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
+    t = time.time()
+
     rnd = np.random.RandomState(seed)
     z = rnd.randn(1, *Gs.input_shape[1:]) # [minibatch, component]
     tflib.set_vars({var: rnd.randn(*var.shape.as_list()) for var in noise_vars}) # [height, width]
     image = Gs.run(z, label, **Gs_kwargs) # [minibatch, height, width, channel]
     # PIL.Image.fromarray(images[0], 'RGB').save(f'{outdir}/seed{seed:04d}.png')
+    
+    with tf.device("/gpu:0"):
+        posImages = tf.transpose(image, [0, 2, 3, 1]) * deltaScale
+        b = posImages.shape[0]
+        uvPnts = tf.reshape(bilinear_sampler(posImages, x, y), (b, nUVs, 3))
+        # pnts_list = []
+        # for i in range(b):
+        #     pnts_list.append(tf.gather_nd(uvPnts[i], uvIdToVtxId))
+        # pnts = tf.stack(pnts_list)
+        pnts = tf.gather_nd(uvPnts[0], uvIdToVtxId)
+        out = tf.get_default_session().run(pnts) + meanPnts
 
-    posImages = tf.transpose(image, [0, 2, 3, 1]) * deltaScale + imageMean
-    b = posImages.shape[0]
-    nPnts = meanObj.pnts.shape[0]
-    nUVs = meanObj.uvs.shape[0]
+        # pnts = img2pnts(image)
+        # out = tf.get_default_session().run(pnts)
+        # meanObj.save("output%d.obj"%seed_idx, out)
 
-    uvIdToVtxId = tf.convert_to_tensor(meanObj.uvIdToVtxId.reshape(nPnts, 1), dtype=tf.int32)
-    u = np.repeat(meanObj.uvs[:,0], b).reshape(b, 1, nUVs)
-    v = np.repeat(meanObj.uvs[:,1], b).reshape(b, 1, nUVs)
-    x = tf.convert_to_tensor(u, dtype=tf.float32)
-    y = tf.convert_to_tensor(v, dtype=tf.float32)
-    uvPnts = tf.reshape(bilinear_sampler(posImages, x, y), (b, nUVs, 3))
-    pnts_list = []
-    for i in range(b):
-        pnts_list.append(tf.gather_nd(uvPnts[i], uvIdToVtxId))
-    pnts = tf.stack(pnts_list)
-    out = tf.get_default_session().run(pnts)
+    t3 = time.time() - t;t=time.time()
 
-    meanObj.save("output%d.obj"%seed_idx, out[0])
+    print("tmark", t3)
+
+    meanObj.save("output%d.obj"%seed_idx, out)
+
+# print("elapsed time", time.time() - t)
+
+
+
+# cmd = 'ngc batch run --name "sg3d-tf-geom-v3-g%d" --preempt RUNONCE --ace nv-us-west-2 --instance dgx1v.32g.4.norm --commandline "cd /ws/jseo-tf;python train.py --outdir=./geom-train/v3-g%d --gpus=4 --data=data/rasters_tfr --dtype=float32 --gamma=%d --res=256" --result /ws/jseo-tf/geom-train/v3-g%d --image "nvidian/ct/stylegan3d:tf-0.2" --org nvidian --team ct --workspace mdezHHJGSoifZ7iMwGoSEw:/ws:RW'
+
+# for g in (50, 25, 10, 5, 2, 1):
+#     print(cmd%(g,g,g,g))
+
+
+
+# ngc batch run --name "sg3d-tf-geom-v4-sg2" --preempt RUNONCE --ace nv-us-west-2 --instance dgx1v.32g.8.norm --commandline "cd /ws/jseo-tf;python train.py --outdir=./geom-train/v4-sg2 --gpus=8 --data=data/rasters_tfr --dtype=float32 --res=256 --cfg stylegan2" --result /ws/jseo-tf/geom-train/v4-sg2 --image "nvidian/ct/stylegan3d:tf-0.2" --org nvidian --team ct --workspace mdezHHJGSoifZ7iMwGoSEw:/ws:RW
+
+# ngc batch run --name "sg3d-tf-geom-v4-sg2-noaug" --preempt RUNONCE --ace nv-us-west-2 --instance dgx1v.32g.8.norm --commandline "cd /ws/jseo-tf;python train.py --outdir=./geom-train/v4-sg2-noaug --gpus=8 --data=data/rasters_tfr --dtype=float32 --res=256 --cfg stylegan2 --aug noaug" --result /ws/jseo-tf/geom-train/v4-sg2-noaug --image "nvidian/ct/stylegan3d:tf-0.2" --org nvidian --team ct --workspace mdezHHJGSoifZ7iMwGoSEw:/ws:RW
+
