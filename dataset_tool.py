@@ -706,40 +706,12 @@ def create_from_images(tfrecord_dir, image_dir, shuffle):
 
 #----------------------------------------------------------------------------
 
-# def gatherRasterFiles(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
-#     rastFiles = [x for x in os.listdir(rasterDir) if x[0].isdigit() and x.endswith(".npy")]
-#     rastFiles.sort()
-#     validRastFiles = []
-#     invalidRastFiles = []
-#     initBin = None
-#     mean = None
-#     maxd = .0
-#     # first pass to check validity
-#     for i, d in enumerate(rastFiles):
-#         print(d, i, len(rastFiles))
-#         rast = np.load(rasterDir+"/"+d)
-#         rastBin = (abs(rast).sum(axis=2) > 0)
-#         if i==0:
-#             initBin = rastBin
-#             mean = rast.copy()
-#             maxd = abs(rast).max()
-#         elif True in (initBin ^ rastBin):
-#             print(d,"rasterization does not align with mean")
-#             invalidRastFiles.append(d)
-#         else:
-#             validRastFiles.append(d)
-#             mean += rast
-#             maxd = max(maxd, abs(rast).max())
-#     mean /= len(validRastFiles)
-#     if len(invalidRastFiles):
-#         print("invalid rasters found!")
-#         for rna in invalidRastFiles:
-#             print("   ",rna)
-#     return validRastFiles, invalidRastFiles
-
-def gatherRasters(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
+def gatherRasterFiles(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
     rastFiles = [x for x in os.listdir(rasterDir) if x[0].isdigit() and x.endswith(".npy")]
-    rastFiles.sort()
+    return sorted(rastFiles)
+    
+def loadRastersWithAlignCheck(rasterDir="F:/nvidia/stylegan3d/data/triplegangers_v1/rasters/"):
+    rastFiles = gatherRasterFiles(rasterDir)
     rasts = []
     rastNoAlign = []
     initBin = None
@@ -779,21 +751,27 @@ def toMeanAndDeltas(rasts):
     # deltas *= deltaScale
     # return mean, deltaScale, deltas
 
-def create_from_nparrays(tfrecord_dir, image_dir, shuffle):
+def create_from_nparrays(tfrecord_dir, image_dir, shuffle, mean_and_delta):
+    mean_and_delta = (mean_and_delta == 1)
     print('Loading nparray images from "%s"' % image_dir)
-
-    rasts, rastNoAlign = gatherRasters(image_dir)
-    nImgs = len(rasts)
-    print("TOTAL %d images found"%nImgs)
     
-    print('computing mean and normalized deltas')
-    mean, deltaScale, deltas = toMeanAndDeltas(rasts)
-    
-    savePath = tfrecord_dir+"/mean_and_scale.npy"
-    np.save(savePath, {'mean':mean, 'deltaScale':deltaScale})
-    print("mean and deltaScale saved to " + savePath)
-
-    img = deltas[0]
+    if mean_and_delta:
+        rasts, rastNoAlign = loadRastersWithAlignCheck(image_dir)
+        nImgs = len(rasts)
+        print("TOTAL %d images found"%nImgs)
+        
+        print('computing mean and normalized deltas')
+        mean, deltaScale, deltas = toMeanAndDeltas(rasts)
+        
+        savePath = tfrecord_dir+"/mean_and_scale.npy"
+        np.save(savePath, {'mean':mean, 'deltaScale':deltaScale})
+        print("mean and deltaScale saved to " + savePath)
+    else:
+        rasts = gatherRasterFiles(image_dir)
+        nImgs = len(rasts)
+        loadImg = lambda x: np.load(os.path.join(image_dir,x))
+        
+    img = deltas[0] if mean_and_delta else loadImg(rasts[0])
     resolution = img.shape[0]
     channels = img.shape[2] if img.ndim == 3 else 1
     if img.shape[1] != resolution:
@@ -806,7 +784,7 @@ def create_from_nparrays(tfrecord_dir, image_dir, shuffle):
     with TFRecordExporter(tfrecord_dir, nImgs) as tfr:
         order = tfr.choose_shuffled_order() if shuffle else np.arange(nImgs)
         for idx in range(order.size):
-            img = deltas[order[idx]]
+            img = deltas[order[idx]] if mean_and_delta else loadImg(rasts[order[idx]])
             if channels == 1:
                 img = img[np.newaxis, :, :] # HW => CHW
             else:
@@ -1088,6 +1066,7 @@ def execute_cmdline(argv):
     p.add_argument(     'tfrecord_dir',     help='New dataset directory to be created')
     p.add_argument(     'image_dir',        help='Directory containing the images')
     p.add_argument(     '--shuffle',        help='Randomize image order (default: 1)', type=int, default=1)
+    p.add_argument(     '--mean_and_delta', help='Load all images at once and compute mean and delta (default: 1)', type=int, default=1)
 
     p = add_command(    'create_from_hdf5', 'Create dataset from legacy HDF5 archive.',
                                             'create_from_hdf5 datasets/celebahq ~/downloads/celeba-hq-1024x1024.h5')
